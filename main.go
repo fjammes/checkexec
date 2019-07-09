@@ -1,5 +1,8 @@
 package main
 
+// Test with: "kubectl run --generator=run-pod/v1 shell --rm -it --image ubuntu -- bash"
+// See: https://github.com/kubernetes/kubernetes/blob/master/test/e2e/framework/exec_util.go
+
 import (
 	"fmt"
 	"io"
@@ -95,7 +98,7 @@ func CheckKubeExec(req *Request) (string, interface{}) {
 		if exitErr, ok := err.(utilexec.ExitError); ok && exitErr.Exited() {
 			exitCode = exitErr.ExitStatus()
 		} else {
-			return "UNKNOWN", fmt.Sprintf("Failed to find exit code: %v",err)
+			return "UNKNOWN", fmt.Sprintf("Failed to find exit code: %v", err)
 		}
 	}
 
@@ -127,7 +130,7 @@ func NewCmd() *cobra.Command {
 
 		Run: func(cmd *cobra.Command, args []string) {
 			req.Namespace = "default"
-			req.Pod = "xrootd-mgr-0"
+			req.Pod = "shell"
 			fmt.Printf(CheckKubeExec(&req))
 		},
 	}
