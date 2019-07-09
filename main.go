@@ -3,11 +3,10 @@ package main
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strings"
 
-	"github.com/appscode/go/flags"
-	"github.com/appscode/searchlight/pkg/icinga"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -34,16 +33,16 @@ func newStringReader(ss []string) io.Reader {
 	return reader
 }
 
-func CheckKubeExec(req *Request) (icinga.State, interface{}) {
+func CheckKubeExec(req *Request) (string, interface{}) {
 	config, err := clientcmd.BuildConfigFromFlags(req.masterURL, req.kubeconfigPath)
 	if err != nil {
-		return icinga.UNKNOWN, err
+		return "UNKNOWN", err
 	}
 	kubeClient := kubernetes.NewForConfigOrDie(config)
 
 	pod, err := kubeClient.CoreV1().Pods(req.Namespace).Get(req.Pod, metav1.GetOptions{})
 	if err != nil {
-		return icinga.UNKNOWN, err
+		return "UNKNOWN", err
 	}
 
 	if req.Container != "" {
@@ -55,9 +54,11 @@ func CheckKubeExec(req *Request) (icinga.State, interface{}) {
 			}
 		}
 		if notFound {
-			return icinga.UNKNOWN, fmt.Sprintf(`Container "%v" not found`, req.Container)
+			return "UNKNOWN", fmt.Sprintf(`Container "%v" not found`, req.Container)
 		}
 	}
+
+	log.Printf(`Container "%v" found`, req.Container)
 
 	execRequest := kubeClient.CoreV1().RESTClient().Post().
 		Resource("pods").
@@ -73,7 +74,7 @@ func CheckKubeExec(req *Request) (icinga.State, interface{}) {
 
 	exec, err := remotecommand.NewSPDYExecutor(config, "POST", execRequest.URL())
 	if err != nil {
-		return icinga.UNKNOWN, err
+		return "UNKNOWN", err
 	}
 
 	stdIn := newStringReader([]string{"-c", req.Arg})
@@ -94,7 +95,7 @@ func CheckKubeExec(req *Request) (icinga.State, interface{}) {
 		if exitErr, ok := err.(utilexec.ExitError); ok && exitErr.Exited() {
 			exitCode = exitErr.ExitStatus()
 		} else {
-			return icinga.UNKNOWN, "Failed to find exit code."
+			return "UNKNOWN", fmt.Sprintf("Failed to find exit code: %v",err)
 		}
 	}
 
@@ -103,7 +104,7 @@ func CheckKubeExec(req *Request) (icinga.State, interface{}) {
 		exitCode = 2
 	}
 
-	return icinga.State(exitCode), output
+	return fmt.Sprintf("%v", exitCode), output
 }
 
 type Request struct {
@@ -119,33 +120,20 @@ type Request struct {
 
 func NewCmd() *cobra.Command {
 	var req Request
-	var icingaHost string
 	c := &cobra.Command{
 		Use:     "check_pod_exec",
 		Short:   "Check exit code of exec command on Kubernetes container",
 		Example: "",
 
 		Run: func(cmd *cobra.Command, args []string) {
-			flags.EnsureRequiredFlags(cmd, "host", "arg")
-
-			host, err := icinga.ParseHost(icingaHost)
-			if err != nil {
-				fmt.Fprintln(os.Stdout, icinga.WARNING, "Invalid icinga host.name")
-				os.Exit(3)
-			}
-			if host.Type != icinga.TypePod {
-				fmt.Fprintln(os.Stdout, icinga.WARNING, "Invalid icinga host type")
-				os.Exit(3)
-			}
-			req.Namespace = host.AlertNamespace
-			req.Pod = host.ObjectName
-			icinga.Output(CheckKubeExec(&req))
+			req.Namespace = "default"
+			req.Pod = "xrootd-mgr-0"
+			fmt.Printf(CheckKubeExec(&req))
 		},
 	}
 
 	c.Flags().StringVar(&req.masterURL, "master", req.masterURL, "The address of the Kubernetes API server (overrides any value in kubeconfig)")
 	c.Flags().StringVar(&req.kubeconfigPath, "kubeconfig", req.kubeconfigPath, "Path to kubeconfig file with authorization information (the master location is set by the master flag).")
-	c.Flags().StringVarP(&icingaHost, "host", "H", "", "Icinga host name")
 	c.Flags().StringVarP(&req.Container, "container", "C", "", "Container name in specified pod")
 	c.Flags().StringVarP(&req.Command, "cmd", "c", "/bin/sh", "Exec command. [Default: /bin/sh]")
 	c.Flags().StringVarP(&req.Arg, "argv", "a", "", "Arguments for exec command. [Format: 'arg; arg; arg']")
